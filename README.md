@@ -83,12 +83,11 @@ Claude Desktop only supports stdio-based MCP servers, so you need [`mcp-proxy`](
        "servicemeow": {
          "command": "mcp-proxy",
          "args": [
-           "--transport", "streamablehttp",
+           "--transport=streamablehttp",
+           "--no-verify-ssl",
+           "--headers", "api_key", "YOUR_API_KEY",
            "https://localhost:8889/mcp/"
-         ],
-         "env": {
-           "API_KEY": "YOUR_API_KEY"
-         }
+         ]
        }
      }
    }
@@ -96,40 +95,31 @@ Claude Desktop only supports stdio-based MCP servers, so you need [`mcp-proxy`](
 
 4. **Restart Claude Desktop** to pick up the new server.
 
-> **Note:** You may need to set `NODE_TLS_REJECT_UNAUTHORIZED=0` in the `env` block for self-signed certificates.
+> **Note:** `--no-verify-ssl` is required for self-signed certificates. Remove it if using trusted TLS certs.
 
 ## Connecting Claude Code
 
-Claude Code supports Streamable HTTP natively — no proxy needed.
+Claude Code connects via `mcp-proxy` using a `.mcp.json` file in your project root.
 
-**Option A — CLI:**
-
-```bash
-claude mcp add servicemeow \
-  --transport url \
-  --url https://localhost:8889/mcp/ \
-  --header "api_key: YOUR_API_KEY"
-```
-
-**Option B — `.mcp.json`:**
-
-Add to `.mcp.json` in your project root:
+Add to `.mcp.json`:
 
 ```json
 {
   "mcpServers": {
     "servicemeow": {
-      "type": "url",
-      "url": "https://localhost:8889/mcp/",
-      "headers": {
-        "api_key": "YOUR_API_KEY"
-      }
+      "command": "mcp-proxy",
+      "args": [
+        "--transport=streamablehttp",
+        "--no-verify-ssl",
+        "--headers", "api_key", "YOUR_API_KEY",
+        "https://localhost:8889/mcp/"
+      ]
     }
   }
 }
 ```
 
-> **Note:** You may need to set `NODE_TLS_REJECT_UNAUTHORIZED=0` for self-signed certificates.
+> **Note:** `--no-verify-ssl` is required for self-signed certificates. Remove it if using trusted TLS certs.
 
 ## Available MCP Tools
 
