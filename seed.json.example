@@ -1,0 +1,78 @@
+{
+  "groups": [
+    {"name": "IT Operations", "description": "General IT support and operations"},
+    {"name": "Cybersecurity", "description": "Security monitoring, incident response, and compliance"},
+    {"name": "Server Infrastructure", "description": "Server provisioning, maintenance, and monitoring"},
+    {"name": "Desktop Support", "description": "End-user device support and software deployment"}
+  ],
+  "users": [
+    {
+      "username": "jchen",
+      "full_name": "Jessica Chen",
+      "email": "jchen@servicemeow.local",
+      "password": "password123",
+      "role": "manager",
+      "group": "IT Operations",
+      "is_lead": true
+    },
+    {
+      "username": "mwilliams",
+      "full_name": "Marcus Williams",
+      "email": "mwilliams@servicemeow.local",
+      "password": "password123",
+      "role": "agent",
+      "group": "IT Operations"
+    },
+    {
+      "username": "spatel",
+      "full_name": "Sanjay Patel",
+      "email": "spatel@servicemeow.local",
+      "password": "password123",
+      "role": "manager",
+      "group": "Cybersecurity",
+      "is_lead": true
+    },
+    {
+      "username": "akim",
+      "full_name": "Alice Kim",
+      "email": "akim@servicemeow.local",
+      "password": "password123",
+      "role": "agent",
+      "group": "Cybersecurity"
+    },
+    {
+      "username": "troberts",
+      "full_name": "Tyler Roberts",
+      "email": "troberts@servicemeow.local",
+      "password": "password123",
+      "role": "manager",
+      "group": "Server Infrastructure",
+      "is_lead": true
+    },
+    {
+      "username": "lgarcia",
+      "full_name": "Luna Garcia",
+      "email": "lgarcia@servicemeow.local",
+      "password": "password123",
+      "role": "agent",
+      "group": "Server Infrastructure"
+    },
+    {
+      "username": "dthompson",
+      "full_name": "Derek Thompson",
+      "email": "dthompson@servicemeow.local",
+      "password": "password123",
+      "role": "manager",
+      "group": "Desktop Support",
+      "is_lead": true
+    },
+    {
+      "username": "nwright",
+      "full_name": "Nina Wright",
+      "email": "nwright@servicemeow.local",
+      "password": "password123",
+      "role": "agent",
+      "group": "Desktop Support"
+    }
+  ]
+}

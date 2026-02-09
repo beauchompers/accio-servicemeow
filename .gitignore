@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+.env
+seed.json
+*.egg-info/
+dist/
+.venv/
+node_modules/
+nginx/certs/
+backend/uploads/
+.pytest_cache/
+*.db
+docs/plans/
+.DS_Store
+.mcp.json
