@@ -1,6 +1,8 @@
 import uuid
+from typing import Annotated
 
 from fastapi import HTTPException
+from pydantic import BaseModel, Field
 
 from app.database import async_session
 from app.mcp.auth import get_current_mcp_user
@@ -10,23 +12,177 @@ from app.models.base import TicketPriority, TicketStatus
 from app.schemas.ticket import TicketCreate, TicketUpdate
 from app.services import note_service, ticket_service
 
+try:
+    from mcp.types import ToolAnnotations
+except ImportError:
+    ToolAnnotations = None  # type: ignore[assignment,misc]
 
-@mcp.tool(description="Create a new support ticket")
+
+# ---------------------------------------------------------------------------
+# Response models
+# ---------------------------------------------------------------------------
+
+# -- Shared inner models --
+
+
+class TicketSummaryData(BaseModel):
+    id: str = Field(description="Ticket UUID")
+    ticket_number: str = Field(description="Ticket number (e.g. ASM-0001)")
+    title: str = Field(description="Ticket title")
+    status: str = Field(description="Current status")
+    priority: str = Field(description="Priority level")
+
+
+class NoteData(BaseModel):
+    id: str = Field(description="Note UUID")
+    author_name: str = Field(description="Display name of the note author")
+    content: str = Field(description="Note content")
+    is_internal: bool = Field(description="Whether the note is internal-only")
+    created_at: str = Field(description="ISO 8601 timestamp")
+
+
+class TicketListItemData(BaseModel):
+    id: str = Field(description="Ticket UUID")
+    ticket_number: str = Field(description="Ticket number (e.g. ASM-0001)")
+    title: str = Field(description="Ticket title")
+    status: str = Field(description="Current status")
+    priority: str = Field(description="Priority level")
+    assigned_group_name: str | None = Field(description="Assigned group name")
+    assigned_user_name: str | None = Field(description="Assigned user name")
+    created_by_name: str | None = Field(description="Creator's display name")
+    created_at: str = Field(description="ISO 8601 timestamp")
+
+
+# -- Per-tool inner models --
+
+
+class TicketDetailData(BaseModel):
+    id: str = Field(description="Ticket UUID")
+    ticket_number: str = Field(description="Ticket number (e.g. ASM-0001)")
+    title: str = Field(description="Ticket title")
+    description: str = Field(description="Ticket description")
+    status: str = Field(description="Current status")
+    priority: str = Field(description="Priority level")
+    assigned_group_id: str | None = Field(description="Assigned group UUID")
+    assigned_group_name: str | None = Field(description="Assigned group name")
+    assigned_user_id: str | None = Field(description="Assigned user UUID")
+    assigned_user_name: str | None = Field(description="Assigned user name")
+    created_by_id: str = Field(description="Creator's UUID")
+    created_by_name: str | None = Field(description="Creator's display name")
+    sla_target_minutes: int | None = Field(description="SLA target in minutes")
+    first_assigned_at: str | None = Field(description="ISO 8601 timestamp of first assignment")
+    created_at: str = Field(description="ISO 8601 timestamp")
+    resolved_at: str | None = Field(description="ISO 8601 resolution timestamp")
+    notes: list[NoteData] = Field(description="Ticket notes")
+
+
+class TicketAssignmentData(BaseModel):
+    id: str = Field(description="Ticket UUID")
+    ticket_number: str = Field(description="Ticket number (e.g. ASM-0001)")
+    assigned_group_id: str | None = Field(description="Assigned group UUID")
+    assigned_user_id: str | None = Field(description="Assigned user UUID")
+
+
+class NoteCreatedData(BaseModel):
+    id: str = Field(description="Note UUID")
+    ticket_id: str = Field(description="Parent ticket UUID")
+    content: str = Field(description="Note content")
+    is_internal: bool = Field(description="Whether the note is internal-only")
+
+
+class TicketResolvedData(BaseModel):
+    id: str = Field(description="Ticket UUID")
+    ticket_number: str = Field(description="Ticket number (e.g. ASM-0001)")
+    status: str = Field(description="Current status (resolved)")
+    resolved_at: str | None = Field(description="ISO 8601 resolution timestamp")
+
+
+class BulkUpdateItemData(BaseModel):
+    id: str = Field(description="Ticket UUID")
+    ticket_number: str = Field(description="Ticket number (e.g. ASM-0001)")
+    status: str = Field(description="Current status after update")
+
+
+# -- Container models --
+
+
+class TicketListData(BaseModel):
+    total: int = Field(description="Total number of matching tickets")
+    page: int = Field(description="Current page number")
+    tickets: list[TicketListItemData] = Field(description="Tickets on this page")
+
+
+class BulkUpdateData(BaseModel):
+    updated: list[BulkUpdateItemData] = Field(description="Updated tickets")
+
+
+# -- Wrapper (result) models --
+
+
+class CreateTicketResult(BaseModel):
+    summary: str = Field(description="Human-readable result message")
+    data: TicketSummaryData | None = Field(description="Created ticket, or null on error")
+
+
+class GetTicketResult(BaseModel):
+    summary: str = Field(description="Human-readable result message")
+    data: TicketDetailData | None = Field(description="Full ticket details, or null on error")
+
+
+class UpdateTicketResult(BaseModel):
+    summary: str = Field(description="Human-readable result message")
+    data: TicketSummaryData | None = Field(description="Updated ticket, or null on error")
+
+
+class AssignTicketResult(BaseModel):
+    summary: str = Field(description="Human-readable result message")
+    data: TicketAssignmentData | None = Field(description="Assignment details, or null on error")
+
+
+class ListTicketsResult(BaseModel):
+    summary: str = Field(description="Human-readable result message")
+    data: TicketListData | None = Field(description="Paginated ticket list, or null on error")
+
+
+class AddNoteResult(BaseModel):
+    summary: str = Field(description="Human-readable result message")
+    data: NoteCreatedData | None = Field(description="Created note, or null on error")
+
+
+class GetNotesResult(BaseModel):
+    summary: str = Field(description="Human-readable result message")
+    data: list[NoteData] | None = Field(description="List of notes, or null on error")
+
+
+class ResolveTicketResult(BaseModel):
+    summary: str = Field(description="Human-readable result message")
+    data: TicketResolvedData | None = Field(description="Resolved ticket, or null on error")
+
+
+class BulkUpdateResult(BaseModel):
+    summary: str = Field(description="Human-readable result message")
+    data: BulkUpdateData | None = Field(description="Update results, or null on error")
+
+
+# ---------------------------------------------------------------------------
+# Tools
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool(
+    description="Create a new support ticket",
+    annotations=ToolAnnotations(openWorldHint=False),
+)
 async def create_ticket(
-    title: str,
-    description: str,
-    priority: str,
-    assigned_group: str,
-    assigned_user: str | None = None,
-) -> dict:
+    title: Annotated[str, Field(description="Short summary of the issue")],
+    description: Annotated[str, Field(description="Detailed description; HTML is sanitized on save")],
+    priority: Annotated[str, Field(description="Priority level: critical, high, medium, or low")],
+    assigned_group: Annotated[str, Field(description="Group name or UUID to assign the ticket to")],
+    assigned_user: Annotated[str | None, Field(description="Username or UUID to assign")] = None,
+) -> CreateTicketResult:
     """Create a new support ticket.
 
-    Args:
-        title: Ticket title
-        description: Ticket description (HTML allowed, sanitized on save)
-        priority: Priority level (critical, high, medium, low)
-        assigned_group: Group to assign the ticket to -- name or UUID
-        assigned_user: Optional user to assign -- username or UUID
+    Generates an auto-incrementing ticket number (ASM-XXXX).
     """
     try:
         async with async_session() as db:
@@ -42,93 +198,84 @@ async def create_ticket(
             )
             ticket = await ticket_service.create_ticket(db, current_user, data)
             await db.commit()
-            return {
-                "summary": f"Created ticket {ticket.ticket_number}: {ticket.title}",
-                "data": {
-                    "id": str(ticket.id),
-                    "ticket_number": ticket.ticket_number,
-                    "title": ticket.title,
-                    "status": ticket.status.value,
-                    "priority": ticket.priority.value,
-                },
-            }
+            return CreateTicketResult(
+                summary=f"Created ticket {ticket.ticket_number}: {ticket.title}",
+                data=TicketSummaryData(
+                    id=str(ticket.id),
+                    ticket_number=ticket.ticket_number,
+                    title=ticket.title,
+                    status=ticket.status.value,
+                    priority=ticket.priority.value,
+                ),
+            )
     except ValueError as e:
-        return {"summary": f"Error: {e}", "data": None}
+        return CreateTicketResult(summary=f"Error: {e}", data=None)
     except Exception as e:
-        return {"summary": f"Unexpected error: {e}", "data": None}
+        return CreateTicketResult(summary=f"Unexpected error: {e}", data=None)
 
 
-@mcp.tool(description="Get a ticket by ID or ticket number")
+@mcp.tool(
+    description="Get a ticket by ID or ticket number",
+    annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False),
+)
 async def get_ticket(
-    ticket_id_or_number: str,
-) -> dict:
-    """Get a ticket by ID (UUID) or ticket number (ASM-XXXX format).
-
-    Returns full ticket details including assigned group/user names,
-    SLA information, and all notes.
-
-    Args:
-        ticket_id_or_number: UUID or ticket number (e.g. ASM-0001)
-    """
+    ticket_id_or_number: Annotated[str, Field(description="Ticket UUID or number (e.g. ASM-0001)")],
+) -> GetTicketResult:
+    """Get full ticket details including assigned group/user, SLA info, and notes."""
     try:
         async with async_session() as db:
             await get_current_mcp_user(db)
             tid = await resolve_ticket_id(db, ticket_id_or_number)
             ticket = await ticket_service.get_ticket(db, tid)
-            return {
-                "summary": f"Ticket {ticket.ticket_number}: {ticket.title} [{ticket.status.value}]",
-                "data": {
-                    "id": str(ticket.id),
-                    "ticket_number": ticket.ticket_number,
-                    "title": ticket.title,
-                    "description": ticket.description,
-                    "status": ticket.status.value,
-                    "priority": ticket.priority.value,
-                    "assigned_group_id": str(ticket.assigned_group_id) if ticket.assigned_group_id else None,
-                    "assigned_group_name": ticket.assigned_group_name,
-                    "assigned_user_id": str(ticket.assigned_user_id) if ticket.assigned_user_id else None,
-                    "assigned_user_name": ticket.assigned_user_name,
-                    "created_by_id": str(ticket.created_by_id),
-                    "created_by_name": ticket.created_by_name,
-                    "sla_target_minutes": ticket.sla_target_minutes,
-                    "first_assigned_at": ticket.first_assigned_at.isoformat() if ticket.first_assigned_at else None,
-                    "created_at": ticket.created_at.isoformat(),
-                    "resolved_at": ticket.resolved_at.isoformat() if ticket.resolved_at else None,
-                    "notes": [
-                        {
-                            "id": str(n.id),
-                            "author_name": n.author_name,
-                            "content": n.content,
-                            "is_internal": n.is_internal,
-                            "created_at": n.created_at.isoformat(),
-                        }
+            return GetTicketResult(
+                summary=f"Ticket {ticket.ticket_number}: {ticket.title} [{ticket.status.value}]",
+                data=TicketDetailData(
+                    id=str(ticket.id),
+                    ticket_number=ticket.ticket_number,
+                    title=ticket.title,
+                    description=ticket.description,
+                    status=ticket.status.value,
+                    priority=ticket.priority.value,
+                    assigned_group_id=str(ticket.assigned_group_id) if ticket.assigned_group_id else None,
+                    assigned_group_name=ticket.assigned_group_name,
+                    assigned_user_id=str(ticket.assigned_user_id) if ticket.assigned_user_id else None,
+                    assigned_user_name=ticket.assigned_user_name,
+                    created_by_id=str(ticket.created_by_id),
+                    created_by_name=ticket.created_by_name,
+                    sla_target_minutes=ticket.sla_target_minutes,
+                    first_assigned_at=ticket.first_assigned_at.isoformat() if ticket.first_assigned_at else None,
+                    created_at=ticket.created_at.isoformat(),
+                    resolved_at=ticket.resolved_at.isoformat() if ticket.resolved_at else None,
+                    notes=[
+                        NoteData(
+                            id=str(n.id),
+                            author_name=n.author_name,
+                            content=n.content,
+                            is_internal=n.is_internal,
+                            created_at=n.created_at.isoformat(),
+                        )
                         for n in ticket.notes
                     ],
-                },
-            }
+                ),
+            )
     except ValueError as e:
-        return {"summary": f"Error: {e}", "data": None}
+        return GetTicketResult(summary=f"Error: {e}", data=None)
     except Exception as e:
-        return {"summary": f"Unexpected error: {e}", "data": None}
+        return GetTicketResult(summary=f"Unexpected error: {e}", data=None)
 
 
-@mcp.tool(description="Update a ticket's fields")
+@mcp.tool(
+    description="Update a ticket's fields",
+    annotations=ToolAnnotations(idempotentHint=True, openWorldHint=False),
+)
 async def update_ticket(
-    ticket_id_or_number: str,
-    title: str | None = None,
-    description: str | None = None,
-    status: str | None = None,
-    priority: str | None = None,
-) -> dict:
-    """Update a ticket's fields.
-
-    Args:
-        ticket_id_or_number: UUID or ticket number (e.g. ASM-0001)
-        title: New title (optional)
-        description: New description (HTML allowed, sanitized on save) (optional)
-        status: New status: open, under_investigation, resolved (optional)
-        priority: New priority: critical, high, medium, low (optional)
-    """
+    ticket_id_or_number: Annotated[str, Field(description="Ticket UUID or number (e.g. ASM-0001)")],
+    title: Annotated[str | None, Field(description="New title")] = None,
+    description: Annotated[str | None, Field(description="New description; HTML is sanitized on save")] = None,
+    status: Annotated[str | None, Field(description="New status: open, under_investigation, or resolved")] = None,
+    priority: Annotated[str | None, Field(description="New priority: critical, high, medium, or low")] = None,
+) -> UpdateTicketResult:
+    """Update a ticket's title, description, status, or priority."""
     try:
         async with async_session() as db:
             current_user = await get_current_mcp_user(db)
@@ -148,35 +295,32 @@ async def update_ticket(
                 db, current_user, tid, data
             )
             await db.commit()
-            return {
-                "summary": f"Updated ticket {ticket.ticket_number}",
-                "data": {
-                    "id": str(ticket.id),
-                    "ticket_number": ticket.ticket_number,
-                    "title": ticket.title,
-                    "status": ticket.status.value,
-                    "priority": ticket.priority.value,
-                },
-            }
+            return UpdateTicketResult(
+                summary=f"Updated ticket {ticket.ticket_number}",
+                data=TicketSummaryData(
+                    id=str(ticket.id),
+                    ticket_number=ticket.ticket_number,
+                    title=ticket.title,
+                    status=ticket.status.value,
+                    priority=ticket.priority.value,
+                ),
+            )
     except ValueError as e:
-        return {"summary": f"Error: {e}", "data": None}
+        return UpdateTicketResult(summary=f"Error: {e}", data=None)
     except Exception as e:
-        return {"summary": f"Unexpected error: {e}", "data": None}
+        return UpdateTicketResult(summary=f"Unexpected error: {e}", data=None)
 
 
-@mcp.tool(description="Assign or reassign a ticket to a group and/or user")
+@mcp.tool(
+    description="Assign or reassign a ticket to a group and/or user",
+    annotations=ToolAnnotations(idempotentHint=True, openWorldHint=False),
+)
 async def assign_ticket(
-    ticket_id_or_number: str,
-    group: str | None = None,
-    user: str | None = None,
-) -> dict:
-    """Assign or reassign a ticket to a group and/or user.
-
-    Args:
-        ticket_id_or_number: UUID or ticket number (e.g. ASM-0001)
-        group: Group to assign to -- name or UUID (optional)
-        user: User to assign to -- username or UUID (optional)
-    """
+    ticket_id_or_number: Annotated[str, Field(description="Ticket UUID or number (e.g. ASM-0001)")],
+    group: Annotated[str | None, Field(description="Group name or UUID to assign to")] = None,
+    user: Annotated[str | None, Field(description="Username or UUID to assign to")] = None,
+) -> AssignTicketResult:
+    """Assign or reassign a ticket to a group and/or user."""
     try:
         async with async_session() as db:
             current_user = await get_current_mcp_user(db)
@@ -192,44 +336,36 @@ async def assign_ticket(
                 db, current_user, tid, data
             )
             await db.commit()
-            return {
-                "summary": f"Assigned ticket {ticket.ticket_number}",
-                "data": {
-                    "id": str(ticket.id),
-                    "ticket_number": ticket.ticket_number,
-                    "assigned_group_id": str(ticket.assigned_group_id) if ticket.assigned_group_id else None,
-                    "assigned_user_id": str(ticket.assigned_user_id) if ticket.assigned_user_id else None,
-                },
-            }
+            return AssignTicketResult(
+                summary=f"Assigned ticket {ticket.ticket_number}",
+                data=TicketAssignmentData(
+                    id=str(ticket.id),
+                    ticket_number=ticket.ticket_number,
+                    assigned_group_id=str(ticket.assigned_group_id) if ticket.assigned_group_id else None,
+                    assigned_user_id=str(ticket.assigned_user_id) if ticket.assigned_user_id else None,
+                ),
+            )
     except ValueError as e:
-        return {"summary": f"Error: {e}", "data": None}
+        return AssignTicketResult(summary=f"Error: {e}", data=None)
     except Exception as e:
-        return {"summary": f"Unexpected error: {e}", "data": None}
+        return AssignTicketResult(summary=f"Unexpected error: {e}", data=None)
 
 
-@mcp.tool(description="List tickets with optional filters")
+@mcp.tool(
+    description="List tickets with optional filters",
+    annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False),
+)
 async def list_tickets(
-    status: str | None = None,
-    priority: str | None = None,
-    group: str | None = None,
-    user: str | None = None,
-    search: str | None = None,
-    sla_breached: bool | None = None,
-    page: int = 1,
-    page_size: int = 20,
-) -> dict:
-    """List tickets with optional filters.
-
-    Args:
-        status: Filter by status (open, under_investigation, resolved) -- comma-separated for multiple
-        priority: Filter by priority (critical, high, medium, low)
-        group: Filter by assigned group -- name or UUID
-        user: Filter by assigned user -- username or UUID
-        search: Full-text search query
-        sla_breached: Filter for SLA-breached tickets (true/false)
-        page: Page number (default 1)
-        page_size: Results per page (default 20)
-    """
+    status: Annotated[str | None, Field(description="Filter by status; comma-separated for multiple (e.g. open,under_investigation)")] = None,
+    priority: Annotated[str | None, Field(description="Filter by priority: critical, high, medium, or low")] = None,
+    group: Annotated[str | None, Field(description="Filter by group name or UUID")] = None,
+    user: Annotated[str | None, Field(description="Filter by username or UUID")] = None,
+    search: Annotated[str | None, Field(description="Full-text search query")] = None,
+    sla_breached: Annotated[bool | None, Field(description="Filter for SLA-breached tickets")] = None,
+    page: Annotated[int, Field(description="Page number (default 1)")] = 1,
+    page_size: Annotated[int, Field(description="Results per page (default 20)")] = 20,
+) -> ListTicketsResult:
+    """List tickets with optional filters and pagination."""
     try:
         async with async_session() as db:
             await get_current_mcp_user(db)
@@ -250,46 +386,43 @@ async def list_tickets(
             tickets, total = await ticket_service.list_tickets(
                 db, filters=filters, page=page, page_size=page_size
             )
-            return {
-                "summary": f"Found {total} tickets (showing page {page})",
-                "data": {
-                    "total": total,
-                    "page": page,
-                    "tickets": [
-                        {
-                            "id": str(t.id),
-                            "ticket_number": t.ticket_number,
-                            "title": t.title,
-                            "status": t.status.value,
-                            "priority": t.priority.value,
-                            "assigned_group_name": t.assigned_group_name,
-                            "assigned_user_name": t.assigned_user_name,
-                            "created_by_name": t.created_by_name,
-                            "created_at": t.created_at.isoformat(),
-                        }
+            return ListTicketsResult(
+                summary=f"Found {total} tickets (showing page {page})",
+                data=TicketListData(
+                    total=total,
+                    page=page,
+                    tickets=[
+                        TicketListItemData(
+                            id=str(t.id),
+                            ticket_number=t.ticket_number,
+                            title=t.title,
+                            status=t.status.value,
+                            priority=t.priority.value,
+                            assigned_group_name=t.assigned_group_name,
+                            assigned_user_name=t.assigned_user_name,
+                            created_by_name=t.created_by_name,
+                            created_at=t.created_at.isoformat(),
+                        )
                         for t in tickets
                     ],
-                },
-            }
+                ),
+            )
     except ValueError as e:
-        return {"summary": f"Error: {e}", "data": None}
+        return ListTicketsResult(summary=f"Error: {e}", data=None)
     except Exception as e:
-        return {"summary": f"Unexpected error: {e}", "data": None}
+        return ListTicketsResult(summary=f"Unexpected error: {e}", data=None)
 
 
-@mcp.tool(description="Add a note to a ticket")
+@mcp.tool(
+    description="Add a note to a ticket",
+    annotations=ToolAnnotations(openWorldHint=False),
+)
 async def add_ticket_note(
-    ticket_id_or_number: str,
-    content: str,
-    is_internal: bool = False,
-) -> dict:
-    """Add a note to a ticket.
-
-    Args:
-        ticket_id_or_number: UUID or ticket number (e.g. ASM-0001)
-        content: Note content (HTML allowed, sanitized on save)
-        is_internal: Whether the note is internal-only (default false)
-    """
+    ticket_id_or_number: Annotated[str, Field(description="Ticket UUID or number (e.g. ASM-0001)")],
+    content: Annotated[str, Field(description="Note content; HTML is sanitized on save")],
+    is_internal: Annotated[bool, Field(description="Whether the note is internal-only")] = False,
+) -> AddNoteResult:
+    """Add a note to a ticket."""
     try:
         async with async_session() as db:
             current_user = await get_current_mcp_user(db)
@@ -298,65 +431,62 @@ async def add_ticket_note(
                 db, current_user, tid, content, is_internal
             )
             await db.commit()
-            return {
-                "summary": "Added note to ticket",
-                "data": {
-                    "id": str(note.id),
-                    "ticket_id": str(note.ticket_id),
-                    "content": note.content,
-                    "is_internal": note.is_internal,
-                },
-            }
+            return AddNoteResult(
+                summary="Added note to ticket",
+                data=NoteCreatedData(
+                    id=str(note.id),
+                    ticket_id=str(note.ticket_id),
+                    content=note.content,
+                    is_internal=note.is_internal,
+                ),
+            )
     except ValueError as e:
-        return {"summary": f"Error: {e}", "data": None}
+        return AddNoteResult(summary=f"Error: {e}", data=None)
     except Exception as e:
-        return {"summary": f"Unexpected error: {e}", "data": None}
+        return AddNoteResult(summary=f"Unexpected error: {e}", data=None)
 
 
-@mcp.tool(description="Get all notes for a ticket")
+@mcp.tool(
+    description="Get all notes for a ticket",
+    annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False),
+)
 async def get_ticket_notes(
-    ticket_id_or_number: str,
-) -> dict:
-    """Get all notes for a ticket.
-
-    Args:
-        ticket_id_or_number: UUID or ticket number (e.g. ASM-0001)
-    """
+    ticket_id_or_number: Annotated[str, Field(description="Ticket UUID or number (e.g. ASM-0001)")],
+) -> GetNotesResult:
+    """Get all notes for a ticket."""
     try:
         async with async_session() as db:
             await get_current_mcp_user(db)
             tid = await resolve_ticket_id(db, ticket_id_or_number)
             notes = await note_service.list_notes(db, tid)
-            return {
-                "summary": f"Found {len(notes)} {'note' if len(notes) == 1 else 'notes'}",
-                "data": [
-                    {
-                        "id": str(n.id),
-                        "author_name": n.author_name,
-                        "content": n.content,
-                        "is_internal": n.is_internal,
-                        "created_at": n.created_at.isoformat(),
-                    }
+            return GetNotesResult(
+                summary=f"Found {len(notes)} {'note' if len(notes) == 1 else 'notes'}",
+                data=[
+                    NoteData(
+                        id=str(n.id),
+                        author_name=n.author_name,
+                        content=n.content,
+                        is_internal=n.is_internal,
+                        created_at=n.created_at.isoformat(),
+                    )
                     for n in notes
                 ],
-            }
+            )
     except ValueError as e:
-        return {"summary": f"Error: {e}", "data": None}
+        return GetNotesResult(summary=f"Error: {e}", data=None)
     except Exception as e:
-        return {"summary": f"Unexpected error: {e}", "data": None}
+        return GetNotesResult(summary=f"Unexpected error: {e}", data=None)
 
 
-@mcp.tool(description="Resolve a ticket with optional resolution note")
+@mcp.tool(
+    description="Resolve a ticket with optional resolution note",
+    annotations=ToolAnnotations(idempotentHint=True, openWorldHint=False),
+)
 async def resolve_ticket(
-    ticket_id_or_number: str,
-    resolution_note: str | None = None,
-) -> dict:
-    """Resolve a ticket, optionally adding a resolution note.
-
-    Args:
-        ticket_id_or_number: UUID or ticket number (e.g. ASM-0001)
-        resolution_note: Optional note to add before resolving
-    """
+    ticket_id_or_number: Annotated[str, Field(description="Ticket UUID or number (e.g. ASM-0001)")],
+    resolution_note: Annotated[str | None, Field(description="Note to add before resolving")] = None,
+) -> ResolveTicketResult:
+    """Resolve a ticket, optionally adding a resolution note first."""
     try:
         async with async_session() as db:
             current_user = await get_current_mcp_user(db)
@@ -366,36 +496,32 @@ async def resolve_ticket(
             data = TicketUpdate(status=TicketStatus.resolved)
             ticket = await ticket_service.update_ticket(db, current_user, tid, data)
             await db.commit()
-            return {
-                "summary": f"Resolved ticket {ticket.ticket_number}",
-                "data": {
-                    "id": str(ticket.id),
-                    "ticket_number": ticket.ticket_number,
-                    "status": ticket.status.value,
-                    "resolved_at": ticket.resolved_at.isoformat() if ticket.resolved_at else None,
-                },
-            }
+            return ResolveTicketResult(
+                summary=f"Resolved ticket {ticket.ticket_number}",
+                data=TicketResolvedData(
+                    id=str(ticket.id),
+                    ticket_number=ticket.ticket_number,
+                    status=ticket.status.value,
+                    resolved_at=ticket.resolved_at.isoformat() if ticket.resolved_at else None,
+                ),
+            )
     except ValueError as e:
-        return {"summary": f"Error: {e}", "data": None}
+        return ResolveTicketResult(summary=f"Error: {e}", data=None)
     except Exception as e:
-        return {"summary": f"Unexpected error: {e}", "data": None}
+        return ResolveTicketResult(summary=f"Unexpected error: {e}", data=None)
 
 
-@mcp.tool(description="Batch-update multiple tickets at once")
+@mcp.tool(
+    description="Batch-update multiple tickets at once",
+    annotations=ToolAnnotations(idempotentHint=True, openWorldHint=False),
+)
 async def bulk_update_tickets(
-    ticket_ids: list[str],
-    status: str | None = None,
-    group: str | None = None,
-    user: str | None = None,
-) -> dict:
-    """Batch-update multiple tickets at once.
-
-    Args:
-        ticket_ids: List of ticket UUIDs or ticket numbers (e.g. ASM-0001)
-        status: New status to set (optional)
-        group: Group to assign to -- name or UUID (optional)
-        user: User to assign to -- username or UUID (optional)
-    """
+    ticket_ids: Annotated[list[str], Field(description="List of ticket UUIDs or numbers")],
+    status: Annotated[str | None, Field(description="New status to set")] = None,
+    group: Annotated[str | None, Field(description="Group name or UUID to assign to")] = None,
+    user: Annotated[str | None, Field(description="Username or UUID to assign to")] = None,
+) -> BulkUpdateResult:
+    """Batch-update multiple tickets at once."""
     try:
         async with async_session() as db:
             current_user = await get_current_mcp_user(db)
@@ -417,17 +543,19 @@ async def bulk_update_tickets(
                     )
                 except HTTPException as e:
                     raise ValueError(f"{tid_str}: {e.detail}") from e
-                results.append({
-                    "id": str(ticket.id),
-                    "ticket_number": ticket.ticket_number,
-                    "status": ticket.status.value,
-                })
+                results.append(
+                    BulkUpdateItemData(
+                        id=str(ticket.id),
+                        ticket_number=ticket.ticket_number,
+                        status=ticket.status.value,
+                    )
+                )
             await db.commit()
-        return {
-            "summary": f"Updated {len(results)} tickets",
-            "data": {"updated": results},
-        }
+        return BulkUpdateResult(
+            summary=f"Updated {len(results)} tickets",
+            data=BulkUpdateData(updated=results),
+        )
     except ValueError as e:
-        return {"summary": f"Error: {e}", "data": None}
+        return BulkUpdateResult(summary=f"Error: {e}", data=None)
     except Exception as e:
-        return {"summary": f"Unexpected error: {e}", "data": None}
+        return BulkUpdateResult(summary=f"Unexpected error: {e}", data=None)
